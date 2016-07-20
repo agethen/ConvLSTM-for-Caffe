@@ -4,7 +4,7 @@ Implementation based on Jeff Donahue's LSTM implementation for Caffe.
 
 ## Installation
 Requires a recent version of caffe (or alternatively, the "recurrent" branch of Jeff Donahue's caffe github repository). 
-Clone with `git clone -b recurrent-layer <address>`
+Clone with `git clone -b recurrent <address>`
 
 Then, simply copy the files in include/ and src/ to their corresponding directories.
 
@@ -23,7 +23,7 @@ If you do not want to use the patcher, you will have to manually merge the two f
 We provide a working configuration file with this repository, see 
 > Makefile.config
 
-It was tested with g++5 and Cuda 7.5.
+It was tested with g++-5 and Cuda 7.5.
 
 ### Building
 Once everything is prepared, run make clean && make to recompile caffe.
@@ -32,7 +32,8 @@ Once everything is prepared, run make clean && make to recompile caffe.
 
 Requires C++11 to compile. Set CUSTOM_CXX := g++ -std=c++11 in Makefile.config.
 We have observed some bugs when compiling with g++-5 (which is not technically supported with CUDA 7.5). 
-To avoid these problems, add: -D__STRICT_ANSI__ -D_MWAITXINTRIN_H_INCLUDED to the compiler line. 
+To avoid these problems, add: 
+`-D__STRICT_ANSI__ -D_MWAITXINTRIN_H_INCLUDED -D_FORCE_INLINES` to the compiler line. 
 
 Furthermore, a bug seems to appear in crop_layer.cu when using C++11 and Cuda. You can find a simple fix in fixes/.
 
@@ -53,3 +54,4 @@ For an example, please refer to the models/ directory!
 
 ### Feedback
 If you find any bugs or have other feedback, please let me know! Thanks :)
+> Contact: s [dot] agethen [at] gmail [dot] com
