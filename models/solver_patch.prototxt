@@ -1,0 +1,22 @@
+net: "models/encode-decode.prototxt"
+test_iter: 125      # Validation Set: 2000 / 16
+test_interval: 625  # Every epoch 10000/16
+test_initialization: false
+
+base_lr: 0.001
+momentum: 0.0
+weight_decay: 0.0005
+
+lr_policy: "inv"
+gamma: 0.0001
+power: 0.75
+
+display: 50
+max_iter: 20000
+
+snapshot: 625
+snapshot_prefix: "convlstm_predict"
+
+solver_mode: GPU
+type: "RMSProp"
+rms_decay: 0.9

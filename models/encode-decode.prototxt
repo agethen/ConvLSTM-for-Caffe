@@ -1,0 +1,325 @@
+# This file is an example for an Encoder - Decoder architecture.
+# In particular, we show to implement the ConvLSTM paper by Shi et al.
+# For this example, we choose N = 16 independent streams.
+
+# The shape of each input is 16 x 16 x 16 in the paper, therefore the total shape is
+# 10 x 16 x 16 x 16 x 16 ( T x N x C x H x W).
+
+
+# Sequence markers
+layer {
+  name: "sequence"
+  type: "HDF5Data"
+  top: "seq"
+
+  hdf5_data_param {
+    # seq.txt contains a single line with a path to a h5 file
+    # That H5 file simply contains a sequence of (2*T-1)*N integers
+    # Where the first N integers are 0, and the remaining 1
+    # See also: build_hdf5.py
+
+    source: "seq.txt"
+    batch_size: 19        # T + (T-1)
+  }
+}
+
+# Slice the Sequence markers into an encoding and decoding phase.
+layer {
+  name: "slice_seq"
+  type: "Slice"
+  bottom: "seq"
+
+  top: "seq_enc"
+  top: "seq_dec"
+  
+  slice_param {
+    axis: 0
+    slice_point: 10
+  }
+}
+
+# Data layers. We choose HDF5 format here.
+# Reminder: Data has to be interleaved: v_t1_n1, v_t1_n2, ..., v_t2_n1, v_t2_n2, ..., v_tT_n1, v_tT_n2, ...
+# All data is scaled to [0,1] here.
+layer {
+  name: "data"
+  type: "HDF5Data"
+  top: "input"      # The actual input data (Sequence of T frames)
+  top: "match"      # Future Prediction: The following T frames we ought to predict.
+
+  hdf5_data_param {
+    source: "data/train.txt"
+    batch_size: 10
+  }
+  include { phase: TRAIN }
+}
+
+layer {
+ name: "data"
+  type: "HDF5Data"
+  top: "input"
+  top: "match"
+
+  hdf5_data_param {
+    source: "data/test.txt"
+    batch_size: 10
+  }
+  include { phase: TEST } 
+}
+
+layer {
+  name: "dummy"
+  type: "DummyData"
+  top: "dummy"
+
+  dummy_data_param {
+    shape {
+      dim: 1
+      dim: 16
+      dim: 256
+      dim: 16
+      dim: 16
+    }
+  }
+}
+
+
+# Encoding network. Reads in T timesteps of features
+# Input data of Conv-LSTM is shaped T x N x C x H x W (Use Reshape layer if necessary)
+
+layer {
+  name: "encode1"
+  type: "ConvLSTM"
+
+  bottom: "input"     # Input features x
+  bottom: "seq_enc"   # Sequence markers
+
+  bottom: "dummy"   # Dummy input h (required by `expose_hidden: true`)
+  bottom: "dummy"   # Dummy input c
+
+  top: "encode1"
+
+  top: "encode1_h"    # Final hidden state (Shape: 1 x N x C x H x W)
+  top: "encode1_c"    # Final cell state
+
+  # This is a parameter from Jeff Donahues implementation.
+  # It allows us to expose `encode1_h` and `encode1_c`.
+  recurrent_param {
+    expose_hidden: true
+  }
+
+  lstm_debug_param{
+    # These two are actually default values and do not need to be set.
+    # num_axes_hadamard: 2 implies that parameters to be learnt are a 2D tensor
+    # axis_hadamard: 3 implies where to apply the product (
+    # Therefore, given TxNxCxHxW, the parameters have shape H x W.
+    axis_hadamard: 3      
+    num_axes_hadamard: 2  
+  }
+
+  # Conv Layer specification
+  lstm_conv_param {
+    num_output: 256
+    kernel_size: 5
+    pad: 2                  # Padding is required! All conv. kernels need to result in the same H x W shape.
+
+    weight_filler {
+      # Do not use xavier or other automatic methods on 5D tensors, this may cause bugs.
+      # Rather use uniform or gaussian!
+      # Xavier: sqrt( 3 / fan_in), fan_in := input_count / N, input_count := 10*16*16*16*16, N := 16
+      # Technically, we would need to specify different for type: "input" and type: "hidden"...
+      type: "gaussian"
+      std: 0.01
+    }
+    bias_filler {
+      type: "constant"
+      value: 0
+    }
+  }
+}
+
+# Purpose of this layer: See `decode1`
+layer {
+  name: "input_decode1"
+  type: "DummyData"
+  top: "input_decode1"
+
+  dummy_data_param {
+    shape {
+      dim: 9 # Notice how T=9, not T=10!
+      dim: 16
+      dim: 16
+      dim: 16
+      dim: 16
+    }
+  }
+}
+
+
+# This layer takes only the hidden and cell state of encode1 as input
+# and generates a sequence from it.
+layer {
+  name: "decode1"
+  type: "ConvLSTM"
+
+  # Although we discard this input, we need to pass something here with the desired shape
+  # In this case we use Dummy Data.
+  bottom: "input_decode1"
+  bottom: "seq_dec"
+
+  bottom: "encode1_h"         # Input encoder's hidden state
+  bottom: "encode1_c"         # and cell state.
+
+  top: "decode1"
+
+  top: "decode1_h"            # We do not need those, but Jeff's implementation exposes them anyway.
+  top: "decode1_c"            # Same.
+
+
+  lstm_debug_param {
+    ignore_x: true            # Do not compute convolutions on input data (x).
+    disable_hadamard: false   # May en-/disable hadamard (By default false)
+
+    # Explanation: See above.
+    axis_hadamard: 3      
+    num_axes_hadamard: 2  
+  }
+
+  recurrent_param {           # Required to input h and c.
+    expose_hidden: true
+  }
+
+  lstm_conv_param {
+    num_output: 256
+    kernel_size: 5
+    pad: 2
+
+    weight_filler {
+      # Do not use xavier or other automatic methods on 5D tensors!
+      # Rather use uniform or gaussian!
+      type: "gaussian"
+      std: 0.005
+    }
+    bias_filler {
+      type: "constant"
+      value: 0
+    }
+  }
+}
+
+# According to the paper, we now concatenate the output of the decoding network with the last output of the encoding network.
+# Then, we pass this tensor through a Forward Convolution network.
+layer {
+  name: "slice_encode"
+  type: "Slice"
+  bottom: "encode1"
+  top: "encode1_top_discard"    # We do not need this. Will pass it into a Silence layer.
+  top: "encode1_slice"          # Last timestep's output. We could actually also use `encode1_h` here.
+  slice_param {
+    axis: 0
+    slice_point: 9
+  }
+}
+
+# Concatenate output of decode1 and encode1
+# Output has shape T x N x C x H x W.
+layer {
+  name: "concat_decode_encode"
+  type: "Concat"
+  bottom: "encode1_slice"
+  bottom: "decode1"
+  top: "decode"
+  concat_param{
+    axis: 0
+  }
+}
+
+# Discard everything we did not use.
+layer {
+  name: "silencium"
+  type: "Silence"
+  bottom: "encode1_top_discard"
+  bottom: "decode1_h"
+  bottom: "decode1_c"
+}
+
+# According to ConvLSTM paper: Forward 1x1 Convolution Layer
+layer {
+  name: "output_conv"
+  type: "Convolution"
+  bottom: "decode"
+  top: "output"
+
+  param {
+    lr_mult: 1
+    decay_mult: 1
+  }
+  param {
+    lr_mult: 2
+    decay_mult: 0
+  }
+
+  convolution_param {
+    num_output: 16                # 16 channels, just as input data!
+    kernel_size: 1
+
+    axis: 2                       # This is necessary, as we use a 5D Tensor. You may remove this by reshaping to a 4D tensor first.
+
+    weight_filler {
+      type: "gaussian"
+      std: 0.005
+    }
+
+    bias_filler {
+      type: "constant"
+      value: 0
+    }
+  }
+}
+
+# Flatten all data
+layer {
+  name: "flat_data"
+  type: "Flatten"
+  bottom: "output"
+  top: "out_flat"
+}
+
+# Flatten target data
+layer {
+  name: "flat_match"
+  type: "Flatten"
+  bottom: "match"
+  top: "match_flat"
+}
+
+# A Sigmoid is automatically applied on out_flat
+# Note that this is NOT the case for match_flat.
+# But as we assume that targets are scaled to [0,1], this is unproblematic
+layer {
+  name: "loss"
+  type: "SigmoidCrossEntropyLoss"
+  bottom: "out_flat"
+  bottom: "match_flat"
+  top: "cross_entropy_loss"
+  loss_weight: 1
+}
+
+
+# Additionally, we might want to see the L2 loss (but do not train on it!)
+layer {
+  name: "sigmoid_out"
+  type: "Sigmoid"
+  bottom: "out_flat"
+  top: "out_sigm"
+}
+
+layer {
+  name: "loss_euclidean"
+  type: "EuclideanLoss"
+  bottom: "out_sigm"
+  bottom: "match_flat"
+  top: "l2_error"
+  loss_weight: 0
+}
+
