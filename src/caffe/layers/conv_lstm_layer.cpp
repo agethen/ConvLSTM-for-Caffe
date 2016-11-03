@@ -103,41 +103,17 @@ namespace caffe {
       if( lstm_conv_param.type() == "hidden" )
         lstm_conv_param = this->layer_param_.lstm_conv_param( 1 );
 
-      auto input  = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "x->input",   "x", "x->input",  2 );
-      auto forget = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "x->forget",  "x", "x->forget", 2 );
-      auto output = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "x->output",  "x", "x->output", 2 );
-      auto gate   = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "x->gate",    "x", "x->gate",   2 );
+      lstm_conv_param.set_num_output( 4 * lstm_conv_param.num_output() );
+      auto x_transform = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param, "x->transform", "x", "x->transform", 2 );
 
-      // We do not need to share parameters, as these convs are done for all timesteps at the same time
-      input->mutable_convolution_param()->set_bias_term( false );
-      forget->mutable_convolution_param()->set_bias_term( false );
-      output->mutable_convolution_param()->set_bias_term( false );
-      gate->mutable_convolution_param()->set_bias_term( false );
+      x_transform->add_param()->set_name( "x_transform" );
+      x_transform->mutable_convolution_param()->set_bias_term( false );
 
       if( this->static_input_ ){
-        auto static_input  = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "static->input",   "x_static", "static->input",  2 );
-        auto static_forget = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "static->forget",  "x_static", "static->forget", 2 );
-        auto static_output = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "static->output",  "x_static", "static->output", 2 );
-        auto static_gate   = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "static->gate",    "x_static", "static->gate",   2 );
-
-        static_input->mutable_convolution_param()->set_bias_term( false );
-        static_forget->mutable_convolution_param()->set_bias_term( false );
-        static_output->mutable_convolution_param()->set_bias_term( false );
-        static_gate->mutable_convolution_param()->set_bias_term( false );
-      }
-
-      auto concat_x = ConvLSTMHelper<Dtype>::CreateConcatLayer( net_param, "x_concat", "W_xc_x", 2 );
-      concat_x->add_bottom( "x->input" );
-      concat_x->add_bottom( "x->forget" );
-      concat_x->add_bottom( "x->output" );
-      concat_x->add_bottom( "x->gate" );
-
-      if( this->static_input_ ){
-        auto concat_static  = ConvLSTMHelper<Dtype>::CreateConcatLayer( net_param, "concat_static", "W_xc_x_static", 2 );
-        concat_static->add_bottom( "static->input" );
-        concat_static->add_bottom( "static->forget" );
-        concat_static->add_bottom( "static->output" );
-        concat_static->add_bottom( "static->gate" );
+        // Note that static input is expected to be of shape: 1 x N x C_static x H x W
+        auto static_transform  = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "static->input",   "x_static", "static->input",  2 );
+        static_transform->mutable_convolution_param()->set_bias_term( false );
+        static_transform->add_param()->set_name( "static_transform" );
       }
     } // ignore_x set?
 
@@ -153,7 +129,7 @@ namespace caffe {
     LayerParameter * x_slice_param;
 
     if( debug_param.ignore_x() == false )
-      x_slice_param = ConvLSTMHelper<Dtype>::CreateSliceLayer( net_param, "W_xc_x_slice", "W_xc_x", 0 );
+      x_slice_param = ConvLSTMHelper<Dtype>::CreateSliceLayer( net_param, "W_xc_x_slice", "x->transform", 0 );
 
     // Slice cont marker from T x N into 1 x N
     auto cont_slice_param   = ConvLSTMHelper<Dtype>::CreateSliceLayer( net_param, "cont_slice", "cont", 0 );
@@ -176,7 +152,7 @@ namespace caffe {
       cont_slice_param->add_top( "cont_t=" + ts );
 
       if( debug_param.ignore_x() == false )
-        x_slice_param->add_top( "W_xc_x_t=" + ts );           // Shape: 1 x N x 4C x H x W
+        x_slice_param->add_top( "x->transform->t=" + ts );           // Shape: 1 x N x 4C x H x W
 
       // Set h to zero if sequence marker 0.
       std::vector<std::string> scale_bottom{ "h_t=" + tm1s, "cont_t=" + ts };
@@ -187,29 +163,14 @@ namespace caffe {
       if( lstm_conv_param.type() == "input" )
         lstm_conv_param = this->layer_param_.lstm_conv_param( 1 );
 
-      auto hidden_input  = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "hidden->input->" + tm1s,   "h_conted_t=" + tm1s, "hidden->input->" + tm1s,  2 );
-      auto hidden_forget = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "hidden->forget->" + tm1s,  "h_conted_t=" + tm1s, "hidden->forget->" + tm1s, 2 );
-      auto hidden_output = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "hidden->output->" + tm1s,  "h_conted_t=" + tm1s, "hidden->output->" + tm1s, 2 );
-      auto hidden_gate   = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "hidden->gate->" + tm1s,    "h_conted_t=" + tm1s, "hidden->gate->" + tm1s,   2 );
+      // If no Hadamard Term, and input features are ignored, we directly generate the LSTM unit input "gate_input_" + ts (avoiding the sum layer)
+      std::string hidden_top = (debug_param.disable_hadamard() && debug_param.ignore_x()) ? "gate_input_" + ts : "hidden->transform->" + tm1s;
 
-      hidden_input->add_param()->set_name(  "h->input" );
-      hidden_input->add_param()->set_name(  "h->input_bias" );
-      hidden_forget->add_param()->set_name( "h->forget" );
-      hidden_forget->add_param()->set_name( "h->forget_bias" );
-      hidden_output->add_param()->set_name( "h->output" );
-      hidden_output->add_param()->set_name( "h->output_bias" );
-      hidden_gate->add_param()->set_name(   "h->gate" );
-      hidden_gate->add_param()->set_name(   "h->gate_bias" );
+      lstm_conv_param.set_num_output( 4 * lstm_conv_param.num_output() );
+      auto hidden_transform  = ConvLSTMHelper<Dtype>::CreateConvLayer( net_param, &lstm_conv_param,  "hidden->transform->" + tm1s, "h_conted_t=" + tm1s, hidden_top,  2 );
 
-
-      // Concat hidden states: 1 x N x 4C x H x W
-      std::string concat_hidden_top = (debug_param.disable_hadamard() && debug_param.ignore_x()) ? "gate_input_" + ts : "W_hc_h_t=" + tm1s;
-      auto concat_hidden   = ConvLSTMHelper<Dtype>::CreateConcatLayer( net_param, "concat_hidden_t=" + tm1s, concat_hidden_top, 2 );
-      concat_hidden->add_bottom( "hidden->input->" + tm1s );
-      concat_hidden->add_bottom( "hidden->forget->" + tm1s );
-      concat_hidden->add_bottom( "hidden->output->" + tm1s );
-      concat_hidden->add_bottom( "hidden->gate->" + tm1s );
-
+      hidden_transform->add_param()->set_name(  "h->transform" );
+      hidden_transform->add_param()->set_name(  "h->transform_bias" );
       
       if( !debug_param.disable_hadamard() ){
         auto hadamard_in = ConvLSTMHelper<Dtype>::CreateHadamard( 
@@ -232,18 +193,18 @@ namespace caffe {
         concat_hadamard->add_bottom( "hadamard_gat_t=" + ts );
       }
 
-      // Recall that for i,f,c,o the preactivation component is the sum of input 'x_t' and hidden state 'h_{t-1}'
+      // Recall that for i,f,c,o the preactivation component is the sum of input 'x_t' and hidden state 'h_{t-1}' + hadamard term
       // x --> W_xc_x --> W_xc_x_<timestep> --> gate_input_<timestep>
-      std::vector<std::string> sum_bottom { "W_hc_h_t=" + tm1s };
+      std::vector<std::string> sum_bottom { "hidden->transform->" + tm1s };
 
       if( debug_param.ignore_x() == false )
-        sum_bottom.push_back( "W_xc_x_t=" + ts );
+        sum_bottom.push_back( "x->transform->t=" + ts );
       
       if( !debug_param.disable_hadamard() )
          sum_bottom.push_back( "hadamard_t=" + ts );
 
       if( this->static_input_ )
-        sum_bottom.push_back( "W_xc_x_static" );
+        sum_bottom.push_back( "static->input" );
 
       if( !debug_param.ignore_x() || !debug_param.disable_hadamard() )
         ConvLSTMHelper<Dtype>::CreateSumLayer( net_param, "gate_input_" + ts, sum_bottom, "gate_input_" + ts );
