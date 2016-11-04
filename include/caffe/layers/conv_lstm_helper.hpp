@@ -162,6 +162,25 @@ namespace caffe{
 
       return conv;
     }
+
+    static LayerParameter * CreateDummyForwardLayer( NetParameter* net_param, std::string name, std::string bottom, std::string top ){
+      LayerParameter * dummy = net_param->add_layer();
+      dummy->set_type( "DummyForward" );
+      dummy->set_name( name );
+      dummy->add_bottom( bottom );
+      dummy->add_top( top );
+      dummy->add_propagate_down( true );
+      return dummy;
+    }
+
+    static LayerParameter * CreateReductionLayer( NetParameter* net_param, std::string name, std::string bottom, std::string top ){
+      LayerParameter* layer = net_param->add_layer();
+      layer->set_name( name );
+      layer->set_type("Reduction");
+      layer->add_bottom( bottom );
+      layer->add_top( top );
+      return layer;
+    }
   };
 }
 

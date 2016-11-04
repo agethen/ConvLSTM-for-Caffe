@@ -2,6 +2,26 @@
 
 namespace caffe {
 
+  template <typename Dtype>
+  void ConvLSTMLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
+        const vector<Blob<Dtype>*>& top) {
+    RecurrentLayer<Dtype>::Reshape( bottom, top );
+
+    // Recurrent Layer does not share diff. for exposed hidden and cell state. Do so here.
+    if( this->expose_hidden_ ){
+      const int bottom_offset = 2 + this->static_input_;
+      for (int i = bottom_offset, j = 0; i < bottom.size(); ++i, ++j) {
+        this->recur_input_blobs_[j]->ShareDiff(*bottom[i]);
+      }
+
+      const int top_offset = this->output_blobs_.size();
+      for (int i = top_offset, j = 0; i < top.size(); ++i, ++j) {
+        top[i]->ShareData(*this->recur_output_blobs_[j]);
+        top[i]->ShareDiff(*this->recur_output_blobs_[j]);
+      }
+    }
+  }
+
   // TODO(agethen): Clean up and simplification
   template <typename Dtype>
   void ConvLSTMLayer<Dtype>::LayerSetUp( const std::vector<Blob<Dtype>*>& bottom, const std::vector<Blob<Dtype>*>& top) {
@@ -23,6 +43,11 @@ namespace caffe {
       in_shape_.push_back( bottom[0]->shape( i ) );
 
     RecurrentLayer<Dtype>::LayerSetUp( bottom, top );
+
+
+    std::vector<std::string> recur_output_names;
+    RecurrentOutputBlobNames( &recur_output_names );
+    this->last_layer_index_ = this->last_layer_index_ - recur_output_names.size();
   }
 
   template <typename Dtype>
@@ -35,8 +60,8 @@ namespace caffe {
   template <typename Dtype>
   void ConvLSTMLayer<Dtype>::RecurrentOutputBlobNames( std::vector<std::string> * names ) const {
     names->resize(2);
-    (*names)[0] = "h_t=" + ConvLSTMHelper<Dtype>::int2str(this->T_);
-    (*names)[1] = "c_t=" + ConvLSTMHelper<Dtype>::int2str(this->T_);
+    (*names)[0] = "h_t=T";
+    (*names)[1] = "c_t=T";
   }
 
   // Shape of initial hidden and cell maps
@@ -142,6 +167,10 @@ namespace caffe {
     output_concat_layer.add_top("h");
     output_concat_layer.mutable_concat_param()->set_axis( 0 );
 
+    // Enable gradient backpropagation to h_0, c_0 (in case we expose them for an encoder-decoder model)
+    ConvLSTMHelper<Dtype>::CreateDummyForwardLayer( net_param, "dummy_forward_c0", "c_t=0", "c_t=0" );
+    ConvLSTMHelper<Dtype>::CreateDummyForwardLayer( net_param, "dummy_forward_h0", "h_t=0", "h_t=0" );
+
     // Timesteps
     for( int t = 1; t <= this->T_; ++t ){
       std::cout << "Unrolling T=" << t << std::endl;
@@ -228,6 +257,25 @@ namespace caffe {
 
     // Note: This layer has to be built AFTER all lstm units are set-up!
     net_param->add_layer()->CopyFrom( output_concat_layer );
+
+    // If we want to backpropagate over the hidden_state output, we need to add a dummy forward for h_t=T
+    // This is because, unlike c_t=T, h_t=T is being used (in the concat layer), and therefore causes a Split layer to spawn
+    // For consistency, we will also create a dummy_forward for c_t=T
+    ConvLSTMHelper<Dtype>::CreateDummyForwardLayer( net_param, "dummy_forward_h", "h_t=" + ConvLSTMHelper<Dtype>::int2str(this->T_), "h_t=T" );
+    ConvLSTMHelper<Dtype>::CreateDummyForwardLayer( net_param, "dummy_forward_c", "c_t=" + ConvLSTMHelper<Dtype>::int2str(this->T_), "c_t=T" );
+
+    if( this->expose_hidden_ ){
+      // We need to add extra pseudo-losses if we expose h_T, c_T
+      std::vector<std::string> recur_output_names;
+      RecurrentOutputBlobNames( &recur_output_names );
+
+      for( int i = 0; i < recur_output_names.size(); ++i ){
+        auto layer = ConvLSTMHelper<Dtype>::CreateReductionLayer( net_param, recur_output_names[i] + "_pseudoloss",
+                                                                  recur_output_names[i], recur_output_names[i] + "_pseudoloss" );
+        layer->add_loss_weight(1);
+      }
+    }
+
   }
 
   INSTANTIATE_CLASS(ConvLSTMLayer);

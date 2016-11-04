@@ -20,6 +20,7 @@ namespace caffe{
       }
 
       virtual void LayerSetUp( const std::vector<Blob<Dtype>*> & bottom, const std::vector<Blob<Dtype>*> & top );
+      virtual void Reshape(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top);
 
       virtual inline int ExactNumTopBlobs() const {
         int num_tops = 1;
