@@ -52,6 +52,9 @@ Use "lstm_convolution_param" to specify the details of the convolutional layer i
 ### Example
 For an example, please refer to the models/ directory!
 
+### Other Notes
+To allow for correct gradient backpropagation, we currently use a workaround to force Caffe to propagate all the way to latent states h_0 / c_0. This is realized by the DummyForward layer, which simply forwards data, and backpropagates gradients. The layer owns a 'dummy' parameter of shape (1), which you may notice if you wish to inspect ConvLSTM's weights. The parameter is without further meaning. This workaround may or may not be removed in the future, in which case old models may not be compatible, as the number of parameters count will have changed.
+
 ### Feedback
 If you find any bugs or have other feedback, please let me know! Thanks :)
 > Contact: s [dot] agethen [at] gmail [dot] com
