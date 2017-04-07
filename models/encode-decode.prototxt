@@ -10,7 +10,7 @@
 layer {
   name: "sequence"
   type: "HDF5Data"
-  top: "seq"
+  top: "sequence"
 
   hdf5_data_param {
     # seq.txt contains a single line with a path to a h5 file
@@ -27,7 +27,7 @@ layer {
 layer {
   name: "slice_seq"
   type: "Slice"
-  bottom: "seq"
+  bottom: "sequence"
 
   top: "seq_enc"
   top: "seq_dec"
