@@ -305,7 +305,9 @@ layer {
   bottom: "out_flat"
   bottom: "match_flat"
   top: "cross_entropy_loss"
-  loss_weight: 1
+  # We flattened TxB into T*B. SCE Loss takes the average over the batch, i.e.,T*B.
+  # By setting the loss_weight to 10(=T) we get an avg over batch, but sum over time.
+  loss_weight: 10
 }
 
 
