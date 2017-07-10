@@ -26,7 +26,7 @@ def patchify( img, shape, size = 4 ):
 # Input shape: 10 x 16 x 16 x 16 x 16 (T x B x C x H x W)
 def reconstruct( img, shape, size = 4 ):
   # shape = [10, 16, 64, 64]
-  img = numpy.reshape( img, (shape[0], orgshape[1], size, size, shape[2]/size, orgshape[3]/size) )
+  img = numpy.reshape( img, (shape[0], shape[1], size, size, shape[2]/size, shape[3]/size) )
   img_T = numpy.transpose( img, (0,1,4,2,5,3) )
   return numpy.reshape( img_T, (shape[0], shape[1], shape[2], shape[3]) )
 ```
