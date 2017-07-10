@@ -4,7 +4,7 @@ import numpy
 FILENAME = 'seq.h5'
 
 # Edit the shape here:
-T = 20
+T = 19
 N = 16
 
 # My sequence indicators
